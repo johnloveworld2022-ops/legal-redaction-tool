@@ -32,10 +32,10 @@ def _convert(raw_path: Path, image_output_dir: Path) -> tuple[str, list[PageText
     if suffix == ".txt":
         return raw_path.read_text(encoding="utf-8"), []
     if suffix == ".docx":
-        return convert_docx(raw_path), []
+        return convert_docx(raw_path, image_output_dir=image_output_dir)
     if suffix == ".pdf":
         pages = convert_pdf(raw_path, image_output_dir=image_output_dir)
-        return pages_to_text(pages), [p for p in pages if p.source == "ocr"]
+        return pages_to_text(pages), [p for p in pages if p.source in ("ocr", "mixed")]
     raise ValueError(f"不支持的文件类型: {suffix}(目前支持 .docx、.pdf、.txt)")
 
 
