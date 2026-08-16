@@ -68,3 +68,18 @@ def case_workspace_for(case_name: str) -> CaseWorkspace:
     ws = CaseWorkspace(root=WORKBENCH_ROOT / f"案件_{safe_name}")
     ws.ensure_created()
     return ws
+
+
+def list_case_names() -> list[str]:
+    """Existing case names (without the '案件_' folder prefix), for a case
+    picker UI. Reads WORKBENCH_ROOT at call time so it respects the same
+    monkeypatching tests use for case_workspace_for.
+    """
+    if not WORKBENCH_ROOT.exists():
+        return []
+    prefix = "案件_"
+    return sorted(
+        p.name[len(prefix):]
+        for p in WORKBENCH_ROOT.iterdir()
+        if p.is_dir() and p.name.startswith(prefix)
+    )

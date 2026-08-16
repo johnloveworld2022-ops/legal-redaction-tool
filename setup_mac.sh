@@ -29,13 +29,17 @@ if [ ! -d "$TOOL_DIR/venv" ]; then
 fi
 source "$TOOL_DIR/venv/bin/activate"
 pip install -q --upgrade pip
-pip install -q ocrmac pillow cryptography pytest
+pip install -q ocrmac pillow cryptography pytest flask
+# pypdf / python-docx are only used to build synthetic test fixtures
+# (a composite PDF page, a docx with an embedded photo) -- not needed by
+# the tool itself at runtime, only for the self-check below.
+pip install -q pypdf python-docx
 
 echo "== 5/5 自检:运行内置测试 =="
 cd "$TOOL_DIR"
 python -m pytest tests/ -q
 
 echo ""
-echo "安装完成。「导入新卷宗」和「批准并导出」两个 App 在:"
+echo "安装完成。「打开脱敏工具」这个 App 在:"
 echo "  $TOOL_DIR/apps/"
-echo "建议把这两个 App 拖到桌面或程序坞,方便使用。"
+echo "建议把它拖到桌面或程序坞,方便使用。双击打开后会自动弹出浏览器网页。"

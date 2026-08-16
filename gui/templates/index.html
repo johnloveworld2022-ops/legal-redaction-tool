@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>法律卷宗脱敏工具</h1>
+<p class="subtitle">把卷宗文件拖进来,选好案件名称,点「开始处理」即可。</p>
+
+{% if error %}
+<div class="flash err">{{ error }}</div>
+{% endif %}
+
+<div class="card">
+  <form action="{{ url_for('process_files') }}" method="post" enctype="multipart/form-data" id="uploadForm">
+    <label for="case_name">案件名称(同一个案件请每次填一样的名字)</label>
+    <input type="text" name="case_name" id="case_name" list="case_list"
+           placeholder="例如:张三合同纠纷" required
+           value="{{ last_case_name or '' }}">
+    <datalist id="case_list">
+      {% for name in existing_cases %}
+      <option value="{{ name }}">
+      {% endfor %}
+    </datalist>
+
+    <label>卷宗文件(支持 PDF / Word / 已改好的 txt,可多选)</label>
+    <div class="dropzone" id="dropzone">
+      <div id="dzText">把文件拖到这里,或点击选择文件</div>
+      <ul class="filelist" id="fileList"></ul>
+      <input type="file" name="files" id="fileInput" multiple accept=".pdf,.docx,.txt">
+    </div>
+
+    <button type="submit" id="submitBtn">开始处理</button>
+  </form>
+</div>
+
+{% if existing_cases %}
+<div class="card">
+  <label style="margin-bottom:10px;">已有案件</label>
+  {% for name in existing_cases %}
+    <div style="padding:6px 0;"><a href="{{ url_for('view_case', case_name=name) }}">{{ name }}</a></div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="rule">
+  <b>唯一规矩:</b> 只把「03_已批准可上传」文件夹里的文件复制给 AI(Claude 等)。
+</div>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const submitBtn = document.getElementById('submitBtn');
+
+dropzone.addEventListener('click', () => fileInput.click());
+['dragenter', 'dragover'].forEach(evt =>
+  dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); })
+);
+['dragleave', 'drop'].forEach(evt =>
+  dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); })
+);
+dropzone.addEventListener('drop', e => {
+  fileInput.files = e.dataTransfer.files;
+  renderFileList();
+});
+fileInput.addEventListener('change', renderFileList);
+
+function renderFileList() {
+  fileList.innerHTML = '';
+  Array.from(fileInput.files).forEach(f => {
+    const li = document.createElement('li');
+    li.textContent = '📄 ' + f.name;
+    fileList.appendChild(li);
+  });
+}
+
+document.getElementById('uploadForm').addEventListener('submit', () => {
+  submitBtn.disabled = true;
+  submitBtn.textContent = '处理中,请稍候...';
+});
+</script>
+{% endblock %}

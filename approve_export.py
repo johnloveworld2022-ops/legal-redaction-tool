@@ -6,13 +6,12 @@ in process_case.py.
 
 Usage: approve_export.py <案件名称>
 """
-import shutil
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from core.case_workspace import case_workspace_for
+from core.orchestrator import approve_case_export
 
 
 def main() -> int:
@@ -21,20 +20,14 @@ def main() -> int:
         return 1
 
     case_name = sys.argv[1]
-    ws = case_workspace_for(case_name)
+    summary = approve_case_export(case_name)
 
-    candidates = [
-        p for p in ws.candidate_dir.glob("*_候选脱敏.txt") if p.is_file()
-    ]
-    if not candidates:
+    if summary.exported_count == 0:
         print(f"案件「{case_name}」的 02_候选脱敏/ 里没有待导出的文件。")
         return 1
 
-    for p in candidates:
-        shutil.copy2(p, ws.approved_dir / p.name)
-
     print(
-        f"✅ 已将 {len(candidates)} 份文件导出到:\n  {ws.approved_dir}\n"
+        f"✅ 已将 {summary.exported_count} 份文件导出到:\n  {summary.approved_dir}\n"
         "只从这个文件夹里的文件复制给 AI。"
     )
     return 0

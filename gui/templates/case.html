@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ case_name }} - 法律卷宗脱敏工具{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('index') }}">&larr; 返回首页</a></p>
+<h1>{{ case_name }}</h1>
+
+{% if not has_any %}
+<div class="card">
+  <p class="muted">这个案件还没有处理过任何文件。<a href="{{ url_for('index') }}">回首页导入卷宗</a>。</p>
+</div>
+{% else %}
+
+{% if not has_pending %}
+<div class="flash ok">✅ 全部文件已导出到「03_已批准可上传」文件夹,可以复制给 AI 使用了。</div>
+{% else %}
+<div class="flash err">⚠️ 有文件需要你确认后才能导出,请看下面每份文档的详情。</div>
+{% endif %}
+
+{% for doc in documents %}
+<div class="card doc-card {{ 'clean' if doc.exported else '' }}">
+  <h3>
+    {{ doc.stem }}
+    {% if doc.exported %}
+      <span class="badge clean">已导出</span>
+    {% else %}
+      <span class="badge review">待确认</span>
+    {% endif %}
+  </h3>
+
+  {% if doc.images %}
+  <p class="muted">识别质量较低的原图(如有),对照检查提取文字有没有认错字:</p>
+  {% for img in doc.images %}
+    <img class="page-image" src="{{ url_for('case_image', case_name=case_name, filename=img) }}" alt="{{ img }}">
+  {% endfor %}
+  {% endif %}
+
+  <form action="{{ url_for('reprocess', case_name=case_name) }}" method="post">
+    <input type="hidden" name="stem" value="{{ doc.stem }}">
+    <label>提取出的原始文字(如发现认错字,直接在这里改,改完点下面的按钮用改正后的文字重新处理)</label>
+    <textarea name="text">{{ doc.raw_text }}</textarea>
+    <p style="margin-top:12px;"><button type="submit">保存修改并重新处理这份文件</button></p>
+  </form>
+
+  <details style="margin-top:16px;">
+    <summary style="cursor:pointer;color:var(--muted);">查看当前脱敏结果</summary>
+    <pre style="white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:8px;margin-top:10px;">{{ doc.candidate_text }}</pre>
+  </details>
+</div>
+{% endfor %}
+
+{% if report_text %}
+<div class="card">
+  <details>
+    <summary style="cursor:pointer;font-weight:600;">查看完整审核报告</summary>
+    <pre style="white-space:pre-wrap;margin-top:12px;">{{ report_text }}</pre>
+  </details>
+</div>
+{% endif %}
+
+{% if has_pending %}
+<form action="{{ url_for('approve', case_name=case_name) }}" method="post">
+  <button type="submit">确认无误,批准导出全部</button>
+</form>
+{% endif %}
+
+{% endif %}
+
+<div class="rule">
+  <b>唯一规矩:</b> 只把「03_已批准可上传」文件夹里的文件复制给 AI(Claude 等)。
+</div>
+{% endblock %}

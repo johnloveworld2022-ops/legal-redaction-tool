@@ -6,17 +6,17 @@
 	<dict>
 		<key>Resources/Assets.car</key>
 		<data>
-		M4HSnBiCXryXhfULC58AkC8qViw=
+		uBhe0XjnXBA4XMTS5u4qKsmyZM4=
 		</data>
 		<key>Resources/Scripts/main.scpt</key>
 		<data>
-		r3+qOrKFFzwwkIQ4UsqPt1s/k8E=
+		rQUbPj8CJHJbA21Llae2LXxqa/M=
 		</data>
-		<key>Resources/droplet.icns</key>
+		<key>Resources/applet.icns</key>
 		<data>
-		qNNSP6gATivEfI1mX4+VCxUouHQ=
+		sINd6lbiqHD5dL8c6u79cFvVXhw=
 		</data>
-		<key>Resources/droplet.rsrc</key>
+		<key>Resources/applet.rsrc</key>
 		<data>
 		ar5xmDs9mPpaINVXiVlVqUCB8ao=
 		</data>
@@ -27,36 +27,36 @@
 		<dict>
 			<key>hash</key>
 			<data>
-			M4HSnBiCXryXhfULC58AkC8qViw=
+			uBhe0XjnXBA4XMTS5u4qKsmyZM4=
 			</data>
 			<key>hash2</key>
 			<data>
-			gi5acymL7+qk9SnMiMkwtBrQArOKnrsfqFsQirFjP80=
+			S/k6TV+XN+bgfA6DzUHnZAsF7xUhwE8Ag9JpyS1R9wo=
 			</data>
 		</dict>
 		<key>Resources/Scripts/main.scpt</key>
 		<dict>
 			<key>hash</key>
 			<data>
-			r3+qOrKFFzwwkIQ4UsqPt1s/k8E=
+			rQUbPj8CJHJbA21Llae2LXxqa/M=
 			</data>
 			<key>hash2</key>
 			<data>
-			j3UorlB1K16QXQw7555QUue9au0T1MgrqVpFUyJl7Hw=
+			MBsmVyciWt/W3p6vQgkHtB6baMdJLuCA/OMODKSFO+U=
 			</data>
 		</dict>
-		<key>Resources/droplet.icns</key>
+		<key>Resources/applet.icns</key>
 		<dict>
 			<key>hash</key>
 			<data>
-			qNNSP6gATivEfI1mX4+VCxUouHQ=
+			sINd6lbiqHD5dL8c6u79cFvVXhw=
 			</data>
 			<key>hash2</key>
 			<data>
-			8bc0JqW+sc2ju5zB4gkHAD9/lxjPcq52eiav7nh8dZ4=
+			J7weZ6vlnv9r32tS5HFcyuPXl2StdDnfepLxAixlryk=
 			</data>
 		</dict>
-		<key>Resources/droplet.rsrc</key>
+		<key>Resources/applet.rsrc</key>
 		<dict>
 			<key>hash</key>
 			<data>
