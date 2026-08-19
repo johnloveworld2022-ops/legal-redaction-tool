@@ -13,6 +13,8 @@ _TYPE_LABELS = {
     "BANK_CARD": "银行卡",
     "EMAIL": "邮箱",
     "ADDRESS": "地址",
+    "BIRTHDATE": "出生日期",
+    "CASE_NUMBER": "案号",
 }
 
 _CONFIDENCE_RANK = {"high": 1, "low": 0}

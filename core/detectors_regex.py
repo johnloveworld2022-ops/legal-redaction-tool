@@ -7,6 +7,19 @@ _PHONE_RE = re.compile(r"1[3-9]\d{9}")
 _BANK_CARD_RE = re.compile(r"\d{16,19}")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
+# Matches only when suffixed with "出生" -- an ordinary date (filing date,
+# contract date, hearing date) shares the same YYYY年M月D日 shape but is
+# legally meaningful content, not PII, and must not be swept up just for
+# looking like a date.
+_BIRTHDATE_RE = re.compile(r"\d{4}年\d{1,2}月\d{1,2}日出生")
+
+# Standard Chinese court case number format (法发〔2013〕13号 编制规则):
+# (year)court-code case-type number号. Court identifier may be pure
+# Chinese characters ("最高法") or Chinese characters + digits ("京0105").
+_CASE_NUMBER_RE = re.compile(
+    r"[\(（]\d{4}[\)）][一-龥]{1,6}\d{0,4}[一-龥]{1,4}\d{1,8}号"
+)
+
 _ID_CHECK_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
 _ID_CHECK_CODES = "10X98765432"
 
@@ -59,5 +72,11 @@ def detect_structured_pii(text: str) -> list[Span]:
 
     for m in _EMAIL_RE.finditer(text):
         spans.append(Span(m.start(), m.end(), "EMAIL", "high", source="regex"))
+
+    for m in _BIRTHDATE_RE.finditer(text):
+        spans.append(Span(m.start(), m.end(), "BIRTHDATE", "high", source="regex"))
+
+    for m in _CASE_NUMBER_RE.finditer(text):
+        spans.append(Span(m.start(), m.end(), "CASE_NUMBER", "high", source="regex"))
 
     return spans

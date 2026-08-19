@@ -67,3 +67,38 @@ def test_no_false_high_confidence_on_short_numbers():
     text = "请于5日内提交材料,共3份。"
     spans = detect_structured_pii(text)
     assert spans == []
+
+
+def test_birthdate_with_出生_suffix_detected():
+    text = "原告张三,男,1990年3月12日出生,住北京市朝阳区。"
+    spans = detect_structured_pii(text)
+    hit = next((s for s in spans if s.entity_type == "BIRTHDATE"), None)
+    assert hit is not None
+    assert text[hit.start:hit.end] == "1990年3月12日出生"
+    assert hit.confidence == "high"
+
+
+def test_ordinary_date_without_出生_suffix_not_flagged_as_birthdate():
+    # A filing/contract/hearing date is legally meaningful content, not a
+    # birthdate -- must not be swept up by the birthdate pattern just for
+    # sharing the same YYYY年M月D日 shape.
+    text = "本案于2024年5月10日立案受理。"
+    spans = detect_structured_pii(text)
+    assert not any(s.entity_type == "BIRTHDATE" for s in spans)
+
+
+def test_standard_case_number_detected():
+    text = "案号:(2024)京0105民初12345号,原告诉称..."
+    spans = detect_structured_pii(text)
+    hit = next((s for s in spans if s.entity_type == "CASE_NUMBER"), None)
+    assert hit is not None
+    assert text[hit.start:hit.end] == "(2024)京0105民初12345号"
+    assert hit.confidence == "high"
+
+
+def test_supreme_court_case_number_without_district_code_detected():
+    text = "本案已被(2023)最高法民申678号裁定驳回。"
+    spans = detect_structured_pii(text)
+    hit = next((s for s in spans if s.entity_type == "CASE_NUMBER"), None)
+    assert hit is not None
+    assert text[hit.start:hit.end] == "(2023)最高法民申678号"
