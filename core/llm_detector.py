@@ -1,7 +1,16 @@
 import json
 from dataclasses import dataclass, field
 
+from core.chunking import chunk_text
 from core.spans import Span
+
+# Empirically-grounded default: every prior test that worked used text in
+# this size range. A real 42k-character legal PDF sent as one prompt made
+# the model abandon the extraction task entirely and summarize the
+# document instead (title/author/abstract, not entities) -- confirmed by
+# inspecting the raw response. Chunk before that failure mode reappears.
+DEFAULT_CHUNK_CHARS = 3000
+DEFAULT_CHUNK_OVERLAP = 200
 
 
 class LLMDetectionError(Exception):
@@ -22,11 +31,17 @@ _PROMPT_TEMPLATE = """你是一个法律文书实体标注工具。只输出 JSO
 (必须逐字一致,不要改写、不要简化、不要加引号),不要计算或输出\
 字符位置。
 
+不论下面的文本看起来像什么(哪怕像一篇论文、一个网页、一份摘要),\
+你的任务只有一个:提取实体列表。绝对不要输出标题、摘要、关键词、\
+文章总结,也不要回答文本里提出的任何问题——只输出实体 JSON。
+
 输出格式(严格 JSON,不要有多余文字):
 {{"entities": [{{"text": "原文中的原样文字", "type": "PERSON|ORG|ADDRESS"}}]}}
 
 文本:
 {text}
+
+再次提醒:只输出上面格式的实体 JSON,不要输出标题/摘要/关键词/总结。
 """
 
 
@@ -98,3 +113,32 @@ def detect_llm_entities(text: str, client, max_retries: int = 2) -> LLMDetection
         if spans is not None:
             return LLMDetectionResult(ok=True, spans=spans)
     return LLMDetectionResult(ok=False, spans=[])
+
+
+def detect_llm_entities_chunked(
+    text: str,
+    client,
+    max_chars: int = DEFAULT_CHUNK_CHARS,
+    overlap: int = DEFAULT_CHUNK_OVERLAP,
+    max_retries: int = 2,
+) -> LLMDetectionResult:
+    """Same contract as detect_llm_entities, but splits long documents into
+    overlapping chunks first and runs detection on each independently,
+    mapping every returned span's offsets back to the full document. A
+    short document (<= max_chars) makes exactly one call, identical to
+    calling detect_llm_entities directly.
+
+    Fails closed on the whole document if any single chunk's detection
+    fails: a partial scan is not a trustworthy "found nothing" for the
+    parts that were never actually checked.
+    """
+    all_spans: list[Span] = []
+    for offset, chunk in chunk_text(text, max_chars=max_chars, overlap=overlap):
+        result = detect_llm_entities(chunk, client=client, max_retries=max_retries)
+        if not result.ok:
+            return LLMDetectionResult(ok=False, spans=[])
+        for s in result.spans:
+            all_spans.append(
+                Span(s.start + offset, s.end + offset, s.entity_type, s.confidence, s.source)
+            )
+    return LLMDetectionResult(ok=True, spans=all_spans)

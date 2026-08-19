@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 from core.detectors_regex import detect_structured_pii
 from core.lexicon_matcher import match_lexicon
-from core.llm_detector import detect_llm_entities
+from core.llm_detector import detect_llm_entities_chunked
 from core.merge_replace import ReplacementResult, apply_replacements, merge_spans
 from core.spans import Span
 
@@ -80,7 +80,7 @@ def redact_document(
     stages.append(StageResult("lexicon", ok=True, low_confidence_count=0))
     all_spans.extend(lexicon_spans)
 
-    llm_result = detect_llm_entities(text, llm_client)
+    llm_result = detect_llm_entities_chunked(text, llm_client)
     stages.append(
         StageResult("llm", ok=llm_result.ok, low_confidence_count=len(llm_result.spans))
     )
