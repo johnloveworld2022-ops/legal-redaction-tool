@@ -168,6 +168,75 @@ def test_page_processing_failure_blocks_auto_export(tmp_path, monkeypatch):
         _cleanup_keychain(case_name)
 
 
+def test_leak_check_blocks_auto_export_even_when_pipeline_reports_clean(
+    clean_txt_file, monkeypatch
+):
+    # simulates a bug elsewhere in the pipeline (e.g. merge_replace
+    # dropping a span) that lets a real ID-card-shaped value survive into
+    # the final text while the pipeline's own bookkeeping still claims
+    # auto_export=True -- the independent leak check must catch this and
+    # override that claim, not trust it.
+    import core.orchestrator as orch
+    from core.pipeline import DocumentRedactionResult, ExportDecision, StageResult
+    from core.merge_replace import ReplacementResult
+
+    def fake_redact_document(text, lexicon, client, existing_mapping=None, extra_stages=None):
+        return DocumentRedactionResult(
+            replacement=ReplacementResult(
+                text="原告⟦人名001⟧,漏检身份证号110101198503125678。",
+                mapping={"⟦人名001⟧": "张三"},
+            ),
+            stages=[StageResult("regex", ok=True)],
+            export_decision=ExportDecision(auto_export=True, reasons=[]),
+        )
+
+    monkeypatch.setattr(orch, "redact_document", fake_redact_document)
+
+    case_name = "测试案J"
+    try:
+        summary = process_case_files(case_name, [clean_txt_file], llm_client=FakeClient())
+        assert summary.all_clean is False
+        assert summary.exported_files == []
+        report_text = summary.report_path.read_text(encoding="utf-8")
+        assert "110101198503125678" in report_text
+    finally:
+        _cleanup_keychain(case_name)
+
+
+def test_approve_skips_leaking_candidate_and_reports_it(clean_txt_file, monkeypatch):
+    import core.orchestrator as orch
+    from core.pipeline import DocumentRedactionResult, ExportDecision, StageResult
+    from core.merge_replace import ReplacementResult
+
+    def fake_redact_document(text, lexicon, client, existing_mapping=None, extra_stages=None):
+        return DocumentRedactionResult(
+            replacement=ReplacementResult(
+                text="原告⟦人名001⟧,漏检身份证号110101198503125678。",
+                mapping={"⟦人名001⟧": "张三"},
+            ),
+            stages=[StageResult("regex", ok=True)],
+            # pipeline itself thinks this needs review for an unrelated
+            # reason, NOT auto-exported -- she reviews it, doesn't notice
+            # the leak, and clicks approve anyway. The leak check at
+            # approve-time must be the second, independent gate.
+            export_decision=ExportDecision(auto_export=False, reasons=["llm 发现 1 处"]),
+        )
+
+    monkeypatch.setattr(orch, "redact_document", fake_redact_document)
+
+    case_name = "测试案K"
+    try:
+        summary = process_case_files(case_name, [clean_txt_file], llm_client=FakeClient())
+        assert summary.all_clean is False
+
+        approve_summary = approve_case_export(case_name)
+        assert approve_summary.exported_count == 0
+        assert len(approve_summary.blocked_by_leak) == 1
+        assert list(approve_summary.approved_dir.iterdir()) == []
+    finally:
+        _cleanup_keychain(case_name)
+
+
 def test_second_document_reuses_mapping_token_across_case(tmp_path):
     case_name = "测试案F"
     from core.case_workspace import case_workspace_for

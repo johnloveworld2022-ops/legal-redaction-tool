@@ -7,11 +7,14 @@ def generate_report(
     ocr_pages: dict[str, list[PageText]] | None = None,
     failed_pages: dict[str, list[PageText]] | None = None,
     duplicate_lexicon_names: list[str] | None = None,
+    leaks: dict[str, list[str]] | None = None,
 ) -> str:
     ocr_pages = ocr_pages or {}
     failed_pages = failed_pages or {}
     duplicate_lexicon_names = duplicate_lexicon_names or []
-    any_blocked = any(not r.export_decision.auto_export for _, r in results)
+    leaks = leaks or {}
+    any_leak = any(doc_leaks for doc_leaks in leaks.values())
+    any_blocked = any_leak or any(not r.export_decision.auto_export for _, r in results)
     header = (
         "⚠️ 有文档需要人工核实,请看下面每份文档的详情,确认无误后再运行"
         "「批准并导出」。"
@@ -35,6 +38,20 @@ def generate_report(
         lines.append("")
     for filename, result in results:
         lines.append(f"## {filename}")
+
+        doc_leaks = leaks.get(filename, [])
+        if doc_leaks:
+            lines.append("### 🚨 检测到可能的信息残留(独立复查发现,优先处理)")
+            lines.append(
+                "系统在导出前对最终文本做了一次独立复查,发现以下内容可能仍然"
+                "包含未脱敏的敏感信息。这个检查和上面的正常审核是分开的、更严格"
+                "的一道关卡——即使其他部分显示「没问题」,这里列出的内容也必须"
+                "先处理掉才能导出。"
+            )
+            for leak in doc_leaks:
+                lines.append(f"- {leak}")
+            lines.append("")
+
         if result.export_decision.auto_export:
             lines.append("状态: ✅ 未发现需要人工核实的内容")
         else:

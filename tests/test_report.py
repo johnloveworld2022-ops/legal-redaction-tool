@@ -88,3 +88,19 @@ def test_no_duplicate_names_produces_no_ambiguity_section():
     result = _clean_result()
     report = generate_report([("case.pdf", result)], duplicate_lexicon_names=[])
     assert "同名待确认" not in report
+
+
+def test_leak_listed_prominently_with_distinct_severity():
+    result = _blocked_result(["regex 发现 1 处需人工核实的疑似内容"])
+    report = generate_report(
+        [("case.pdf", result)],
+        leaks={"case.pdf": ["「张三」的脱敏未完全生效,在最终文本中仍能找到"]},
+    )
+    assert "🚨" in report
+    assert "张三" in report
+
+
+def test_no_leaks_produces_no_leak_section():
+    result = _clean_result()
+    report = generate_report([("case.pdf", result)], leaks={"case.pdf": []})
+    assert "🚨" not in report

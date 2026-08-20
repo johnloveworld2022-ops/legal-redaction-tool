@@ -9,6 +9,7 @@ from pathlib import Path
 
 from core.case_workspace import CaseWorkspace, case_workspace_for, find_duplicate_lexicon_entries
 from core.convert import PageText, convert_docx, convert_pdf, pages_to_text
+from core.leak_check import verify_no_leak
 from core.mapping_store import MappingStore
 from core.ollama_client import OllamaClient
 from core.pipeline import DocumentRedactionResult, StageResult, redact_document
@@ -31,6 +32,7 @@ class ApproveSummary:
     case_name: str
     approved_dir: Path
     exported_count: int
+    blocked_by_leak: list[tuple[str, list[str]]] = field(default_factory=list)
 
 
 def _convert(raw_path: Path, image_output_dir: Path) -> tuple[str, list[PageText], bool]:
@@ -67,6 +69,7 @@ def process_case_files(
     results: list[tuple[str, DocumentRedactionResult]] = []
     ocr_pages_by_file: dict[str, list[PageText]] = {}
     failed_pages_by_file: dict[str, list[PageText]] = {}
+    leaks_by_file: dict[str, list[str]] = {}
     processed_filenames: list[str] = []
     skipped: list[tuple[str, str]] = []
 
@@ -122,6 +125,14 @@ def process_case_files(
         )
         running_mapping = result.replacement.mapping
 
+        # Independent re-check of the pipeline's own output, run right
+        # before this text is written anywhere it could be auto-exported
+        # from. Never trust export_decision.auto_export alone -- it only
+        # reflects what the detection stages themselves reported, not
+        # whether the final text is actually clean.
+        leak_result = verify_no_leak(result.replacement.text, result.replacement.mapping)
+        leaks_by_file[raw_path.name] = leak_result.leaks
+
         candidate_path = ws.candidate_dir / f"{raw_path.stem}_候选脱敏.txt"
         candidate_path.write_text(result.replacement.text, encoding="utf-8")
         results.append((raw_path.name, result))
@@ -136,12 +147,14 @@ def process_case_files(
 
     report_text = generate_report(
         results, ocr_pages=ocr_pages_by_file, failed_pages=failed_pages_by_file,
-        duplicate_lexicon_names=duplicate_names,
+        duplicate_lexicon_names=duplicate_names, leaks=leaks_by_file,
     )
     report_path = ws.candidate_dir / "审核报告.md"
     report_path.write_text(report_text, encoding="utf-8")
 
-    all_clean = all(r.export_decision.auto_export for _, r in results)
+    all_clean = all(r.export_decision.auto_export for _, r in results) and all(
+        not leaks for leaks in leaks_by_file.values()
+    )
     exported_files: list[Path] = []
     if all_clean:
         for filename, _ in results:
@@ -159,10 +172,32 @@ def process_case_files(
 
 
 def approve_case_export(case_name: str) -> ApproveSummary:
+    """The second, independent leak-check gate. process_case_files already
+    checks the text it wrote to 02_候选脱敏/, but this is the last point
+    before a file reaches 03_已批准可上传/ and must not simply trust that
+    an earlier check already covered it -- a candidate file here could
+    have been written by a different code path, or the mapping could have
+    changed since (a later document in the same case adding a name this
+    candidate's text also happens to contain). Re-verified fresh, every
+    time, against the case's current mapping.
+    """
     ws = case_workspace_for(case_name)
+    mapping_store = MappingStore(path=ws.mapping_path, keychain_service=ws.keychain_service)
+    mapping = mapping_store.load()
+
     candidates = [p for p in ws.candidate_dir.glob("*_候选脱敏.txt") if p.is_file()]
+    exported_count = 0
+    blocked_by_leak: list[tuple[str, list[str]]] = []
     for p in candidates:
+        text = p.read_text(encoding="utf-8")
+        leak_result = verify_no_leak(text, mapping)
+        if not leak_result.ok:
+            blocked_by_leak.append((p.name, leak_result.leaks))
+            continue
         shutil.copy2(p, ws.approved_dir / p.name)
+        exported_count += 1
+
     return ApproveSummary(
-        case_name=case_name, approved_dir=ws.approved_dir, exported_count=len(candidates),
+        case_name=case_name, approved_dir=ws.approved_dir, exported_count=exported_count,
+        blocked_by_leak=blocked_by_leak,
     )

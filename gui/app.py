@@ -7,6 +7,7 @@ AppleScript drag-and-drop droplet with something that can show a flagged
 OCR page's saved image right next to an editable text box for correction,
 which a modal dialog box cannot do.
 """
+import secrets
 import shutil
 import socket
 import sys
@@ -18,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flask import Flask, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, flash, redirect, render_template, request, send_from_directory, url_for
 
 from core.case_workspace import case_workspace_for, list_case_names
 from core.orchestrator import approve_case_export, process_case_files
@@ -26,6 +27,9 @@ from core.orchestrator import approve_case_export, process_case_files
 PORT = 5055
 
 app = Flask(__name__)
+# Random per-process key, only used to sign the flash-message cookie for
+# this local single-user session -- no cross-restart persistence needed.
+app.secret_key = secrets.token_hex(16)
 
 
 @app.route("/")
@@ -123,7 +127,14 @@ def reprocess(case_name):
 
 @app.route("/case/<case_name>/approve", methods=["POST"])
 def approve(case_name):
-    approve_case_export(case_name)
+    summary = approve_case_export(case_name)
+    if summary.blocked_by_leak:
+        names = "、".join(name for name, _leaks in summary.blocked_by_leak)
+        flash(
+            f"🚨 以下文件在导出前的独立复查中发现可能残留的敏感信息,未导出:{names}。"
+            "详情见下方审核报告。",
+            "leak",
+        )
     return redirect(url_for("view_case", case_name=case_name))
 
 

@@ -22,8 +22,17 @@ def main() -> int:
     case_name = sys.argv[1]
     summary = approve_case_export(case_name)
 
+    if summary.blocked_by_leak:
+        print("🚨 以下文件在导出前的独立复查中发现可能残留的敏感信息,未导出:")
+        for filename, leaks in summary.blocked_by_leak:
+            print(f"  {filename}:")
+            for leak in leaks:
+                print(f"    - {leak}")
+        print("请打开 02_候选脱敏/ 里对应文件人工检查,确认安全后再重新处理。\n")
+
     if summary.exported_count == 0:
-        print(f"案件「{case_name}」的 02_候选脱敏/ 里没有待导出的文件。")
+        if not summary.blocked_by_leak:
+            print(f"案件「{case_name}」的 02_候选脱敏/ 里没有待导出的文件。")
         return 1
 
     print(
