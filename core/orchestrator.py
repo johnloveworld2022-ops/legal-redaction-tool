@@ -7,7 +7,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.case_workspace import CaseWorkspace, case_workspace_for
+from core.case_workspace import CaseWorkspace, case_workspace_for, find_duplicate_lexicon_entries
 from core.convert import PageText, convert_docx, convert_pdf, pages_to_text
 from core.mapping_store import MappingStore
 from core.ollama_client import OllamaClient
@@ -33,19 +33,23 @@ class ApproveSummary:
     exported_count: int
 
 
-def _convert(raw_path: Path, image_output_dir: Path) -> tuple[str, list[PageText]]:
-    """Returns (text, ocr_pages). ocr_pages is empty for a .txt file being
-    fed back in as an already-human-corrected transcription -- there is
-    nothing left to OCR-check.
+def _convert(raw_path: Path, image_output_dir: Path) -> tuple[str, list[PageText], bool]:
+    """Returns (text, all_pages, has_native_table). all_pages covers every
+    page/embedded-image object the conversion produced, including ones
+    that failed or carry only a text layer -- not just the OCR'd ones --
+    so the caller can build a complete per-object processing ledger:
+    any object without a clean terminal state blocks auto-export. Empty
+    for a .txt file being fed back in as an already-human-corrected
+    transcription -- there is nothing left to OCR-check or fail.
     """
     suffix = raw_path.suffix.lower()
     if suffix == ".txt":
-        return raw_path.read_text(encoding="utf-8"), []
+        return raw_path.read_text(encoding="utf-8"), [], False
     if suffix == ".docx":
         return convert_docx(raw_path, image_output_dir=image_output_dir)
     if suffix == ".pdf":
         pages = convert_pdf(raw_path, image_output_dir=image_output_dir)
-        return pages_to_text(pages), [p for p in pages if p.source in ("ocr", "mixed")]
+        return pages_to_text(pages), pages, False
     raise ValueError(f"不支持的文件类型: {suffix}(目前支持 .docx、.pdf、.txt)")
 
 
@@ -54,6 +58,7 @@ def process_case_files(
 ) -> ProcessSummary:
     ws = case_workspace_for(case_name)
     lexicon = ws.load_lexicon()
+    duplicate_names = find_duplicate_lexicon_entries(lexicon)
 
     mapping_store = MappingStore(path=ws.mapping_path, keychain_service=ws.keychain_service)
     running_mapping = mapping_store.load()
@@ -61,6 +66,7 @@ def process_case_files(
     client = llm_client if llm_client is not None else OllamaClient()
     results: list[tuple[str, DocumentRedactionResult]] = []
     ocr_pages_by_file: dict[str, list[PageText]] = {}
+    failed_pages_by_file: dict[str, list[PageText]] = {}
     processed_filenames: list[str] = []
     skipped: list[tuple[str, str]] = []
 
@@ -70,16 +76,45 @@ def process_case_files(
             continue
         raw_path = ws.import_raw_file(src)
         try:
-            text, ocr_pages = _convert(raw_path, image_output_dir=ws.text_dir)
+            text, all_pages, has_native_table = _convert(raw_path, image_output_dir=ws.text_dir)
         except Exception as e:
             skipped.append((raw_path.name, str(e)))
             continue
 
         (ws.text_dir / f"{raw_path.stem}.txt").write_text(text, encoding="utf-8")
+        ocr_pages = [p for p in all_pages if p.source in ("ocr", "mixed")]
         ocr_pages_by_file[raw_path.name] = ocr_pages
 
+        failed_pages = [p for p in all_pages if p.source == "failed"]
+        failed_pages_by_file[raw_path.name] = failed_pages
+        table_flag_count = sum(1 for p in all_pages if p.possible_table) + (
+            1 if has_native_table else 0
+        )
         low_conf_count = sum(len(p.low_confidence_lines) for p in ocr_pages)
-        extra_stages = [StageResult("ocr", ok=True, low_confidence_count=low_conf_count)]
+        extra_stages = [
+            StageResult("ocr", ok=True, low_confidence_count=low_conf_count),
+            # Any page/image that never reached a clean terminal state
+            # (render/OCR failure, corrupt embedded image) must block
+            # auto-export -- a silently-skipped page is otherwise
+            # indistinguishable from a page that was checked and found
+            # clean.
+            StageResult("处理台账", ok=(len(failed_pages) == 0)),
+            # Table/form layout is exactly the shape that can pass every
+            # per-token confidence check while still being wrong about
+            # which value belongs to which row (a name/ID-number pair
+            # swapped between adjacent cells) -- force review rather than
+            # trust automated detection on it.
+            StageResult("表格/表单", ok=True, low_confidence_count=table_flag_count),
+            # A name listed twice in the lawyer's own case-person list is
+            # the cheapest available signal that two different people in
+            # this case might share a name -- the pipeline has no way to
+            # tell them apart (same string always -> same token), so this
+            # blocks auto-export rather than silently merging their
+            # identities.
+            StageResult(
+                "同名待确认", ok=True, low_confidence_count=len(duplicate_names)
+            ),
+        ]
 
         result = redact_document(
             text, lexicon, client,
@@ -99,7 +134,10 @@ def process_case_files(
 
     mapping_store.save(running_mapping)
 
-    report_text = generate_report(results, ocr_pages=ocr_pages_by_file)
+    report_text = generate_report(
+        results, ocr_pages=ocr_pages_by_file, failed_pages=failed_pages_by_file,
+        duplicate_lexicon_names=duplicate_names,
+    )
     report_path = ws.candidate_dir / "审核报告.md"
     report_path.write_text(report_text, encoding="utf-8")
 

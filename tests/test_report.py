@@ -55,3 +55,36 @@ def test_clean_ocr_pages_produce_no_extra_section():
     page = PageText(page_number=1, text="fine", source="ocr", low_confidence_lines=[])
     report = generate_report([("case.pdf", result)], ocr_pages={"case.pdf": [page]})
     assert "OCR 核对" not in report
+
+
+def test_failed_pages_listed_with_reason():
+    result = _blocked_result(["处理台账 检测未能正常完成,需人工确认"])
+    failed_page = PageText(
+        page_number=5, text="", source="failed",
+        failure_reason="第 5 页处理失败: 外部命令超时(120秒): pdftoppm",
+    )
+    report = generate_report(
+        [("case.pdf", result)], failed_pages={"case.pdf": [failed_page]}
+    )
+    assert "第 5 页" in report
+    assert "外部命令超时" in report
+    assert "处理失败" in report
+
+
+def test_no_failed_pages_produces_no_failure_section():
+    result = _clean_result()
+    report = generate_report([("case.pdf", result)], failed_pages={"case.pdf": []})
+    assert "处理失败" not in report
+
+
+def test_duplicate_lexicon_names_listed_once_at_case_level():
+    result = _blocked_result(["同名待确认 发现 1 处需人工核实的疑似内容"])
+    report = generate_report([("case.pdf", result)], duplicate_lexicon_names=["张三"])
+    assert "张三" in report
+    assert "同名" in report or "重复" in report
+
+
+def test_no_duplicate_names_produces_no_ambiguity_section():
+    result = _clean_result()
+    report = generate_report([("case.pdf", result)], duplicate_lexicon_names=[])
+    assert "同名待确认" not in report

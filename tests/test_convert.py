@@ -139,15 +139,16 @@ def composite_page_pdf(tmp_path):
 
 
 def test_docx_extracts_expected_text(docx_file):
-    text, images = convert_docx(docx_file)
+    text, images, has_table = convert_docx(docx_file)
     assert SENTENCE in text
     assert images == []
+    assert has_table is False
 
 
 def test_docx_with_embedded_photo_ocrs_it_instead_of_silently_dropping_it(
     docx_with_embedded_photo,
 ):
-    text, images = convert_docx(docx_with_embedded_photo)
+    text, images, _has_table = convert_docx(docx_with_embedded_photo)
     assert "以下为本案证据材料" in text
     assert "身份证号" in text  # from OCR of the embedded photo
     assert len(images) == 1
@@ -155,7 +156,7 @@ def test_docx_with_embedded_photo_ocrs_it_instead_of_silently_dropping_it(
 
 
 def test_docx_with_no_images_behaves_as_before(docx_file):
-    text, images = convert_docx(docx_file)
+    text, images, _has_table = convert_docx(docx_file)
     assert SENTENCE in text
     assert "OCR" not in text
     assert images == []
@@ -166,7 +167,7 @@ def test_docx_embedded_photo_image_persisted_when_output_dir_given(
 ):
     image_dir = tmp_path / "saved"
     image_dir.mkdir()
-    text, images = convert_docx(docx_with_embedded_photo, image_output_dir=image_dir)
+    text, images, _has_table = convert_docx(docx_with_embedded_photo, image_output_dir=image_dir)
     assert images[0].source_image_path is not None
     assert images[0].source_image_path.exists()
     assert images[0].source_image_path.parent == image_dir

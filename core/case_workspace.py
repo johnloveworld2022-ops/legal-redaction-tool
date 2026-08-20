@@ -61,6 +61,25 @@ class CaseWorkspace:
         return dest
 
 
+def find_duplicate_lexicon_entries(entries: list[str]) -> list[str]:
+    """Returns the distinct entries that appear more than once in the
+    case's manually-curated name list (after trimming incidental
+    whitespace). A lawyer typing the same name twice is the cheapest
+    available signal that two different people in this case might share a
+    name -- the redaction pipeline currently has no way to tell them
+    apart (same string -> same token, unconditionally), so this is
+    surfaced as an ambiguity that blocks auto-export rather than silently
+    merging them into one identity.
+    """
+    seen: dict[str, int] = {}
+    for raw in entries:
+        entry = raw.strip()
+        if not entry:
+            continue
+        seen[entry] = seen.get(entry, 0) + 1
+    return [entry for entry, count in seen.items() if count > 1]
+
+
 def case_workspace_for(case_name: str) -> CaseWorkspace:
     safe_name = case_name.strip()
     if not safe_name:
