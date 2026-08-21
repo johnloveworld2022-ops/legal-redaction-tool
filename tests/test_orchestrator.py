@@ -237,6 +237,86 @@ def test_approve_skips_leaking_candidate_and_reports_it(clean_txt_file, monkeypa
         _cleanup_keychain(case_name)
 
 
+def test_leak_check_catches_lexicon_name_the_pipeline_missed_entirely(
+    clean_txt_file, monkeypatch,
+):
+    # This is the gap that plain regex re-scanning could never close: a
+    # name in the lawyer's own case-person list that BOTH the
+    # lexicon-match stage and the LLM stage somehow failed to catch (so
+    # it was never added to `mapping` at all -- not even a token exists
+    # for it). No structured regex pattern would ever flag a bare name,
+    # so only re-running match_lexicon against the final output can
+    # catch this. Simulates redact_document itself having a bug that
+    # drops a lexicon-matched span before merge/replace runs.
+    import core.orchestrator as orch
+    from core.pipeline import DocumentRedactionResult, ExportDecision, StageResult
+    from core.merge_replace import ReplacementResult
+
+    def fake_redact_document(text, lexicon, client, existing_mapping=None, extra_stages=None):
+        return DocumentRedactionResult(
+            replacement=ReplacementResult(
+                text="原告李四诉被告某某公司合同纠纷。",  # "李四" never replaced
+                mapping={},
+            ),
+            stages=[StageResult("regex", ok=True)],
+            export_decision=ExportDecision(auto_export=True, reasons=[]),
+        )
+
+    monkeypatch.setattr(orch, "redact_document", fake_redact_document)
+
+    case_name = "测试案L"
+    from core.case_workspace import case_workspace_for
+    ws = case_workspace_for(case_name)
+    ws.lexicon_path.write_text("李四\n", encoding="utf-8")
+
+    try:
+        summary = process_case_files(case_name, [clean_txt_file], llm_client=FakeClient())
+        assert summary.all_clean is False
+        assert summary.exported_files == []
+        report_text = summary.report_path.read_text(encoding="utf-8")
+        assert "李四" in report_text
+    finally:
+        _cleanup_keychain(case_name)
+
+
+def test_reprocessing_one_document_preserves_another_documents_report_section(tmp_path):
+    # Real bug found via external architecture review: process_case_files
+    # only ever knows about the file_paths passed into THAT call. The
+    # documented OCR-correction workflow (gui/app.py's /reprocess route)
+    # calls it with a single corrected file -- naively regenerating
+    # 审核报告.md from just that one result would silently discard doc1's
+    # review status here.
+    case_name = "测试案M"
+    doc1 = tmp_path / "doc1.txt"
+    doc1.write_text("原告李四诉被告某某公司合同纠纷。", encoding="utf-8")
+    doc2 = tmp_path / "doc2.txt"
+    doc2.write_text("本合同双方已就交货期达成一致,无需另行通知。", encoding="utf-8")
+
+    try:
+        # doc1's call: the (fake) LLM finds a name -> forces review,
+        # doc1's section in the report will say "需要人工核实".
+        s1 = process_case_files(
+            case_name, [doc1],
+            llm_client=FakeClient('{"entities": [{"text": "李四", "type": "PERSON"}]}'),
+        )
+        assert s1.all_clean is False
+        report_after_doc1 = s1.report_path.read_text(encoding="utf-8")
+        assert "doc1.txt" in report_after_doc1
+        assert "需要人工核实" in report_after_doc1
+
+        # doc2's call (simulating a reprocess of a DIFFERENT, unrelated
+        # file) must not erase doc1's section from the shared report.
+        s2 = process_case_files(case_name, [doc2], llm_client=FakeClient())
+        report_after_doc2 = s2.report_path.read_text(encoding="utf-8")
+        assert "doc1.txt" in report_after_doc2
+        assert "doc2.txt" in report_after_doc2
+        # doc1 still needs review -> the overall header must reflect that,
+        # even though doc2 alone would have been clean
+        assert "需要人工核实" in report_after_doc2.split("\n")[2]
+    finally:
+        _cleanup_keychain(case_name)
+
+
 def test_second_document_reuses_mapping_token_across_case(tmp_path):
     case_name = "测试案F"
     from core.case_workspace import case_workspace_for

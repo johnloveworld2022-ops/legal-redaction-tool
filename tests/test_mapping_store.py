@@ -1,6 +1,9 @@
 import json
+import subprocess
+
 import pytest
 from core.mapping_store import MappingStore
+from core.subprocess_utils import SubprocessTimeoutError
 
 
 @pytest.fixture
@@ -46,3 +49,49 @@ def test_raw_file_on_disk_contains_no_plaintext_pii(store):
 
 def test_load_missing_file_returns_empty_mapping(store):
     assert store.load() == {}
+
+
+def test_non_44_keychain_failure_raises_instead_of_silently_regenerating_key(store, monkeypatch):
+    # Any find-generic-password failure OTHER than "genuinely not found"
+    # (exit code 44) -- a locked keychain, a denied access prompt, a
+    # transient error -- must never be treated the same as "no key yet."
+    # Falling through to key generation in that case would overwrite an
+    # existing key via `-U` and permanently orphan an already-encrypted
+    # mapping.json.enc. Found via external security review.
+    class FakeResult:
+        returncode = 51  # arbitrary non-44, non-zero code
+        stdout = ""
+        stderr = "keychain is locked"
+
+    calls = []
+
+    def fake_run_subprocess(args, **kwargs):
+        calls.append(args)
+        return FakeResult()
+
+    monkeypatch.setattr("core.mapping_store.run_subprocess", fake_run_subprocess)
+
+    with pytest.raises(RuntimeError):
+        store._get_or_create_key()
+
+    # must not have attempted to add/overwrite a key after the failed read
+    assert not any("add-generic-password" in call for call in calls)
+
+
+def test_keychain_calls_go_through_the_timeout_wrapper(store, monkeypatch):
+    # mapping_store must not bypass subprocess_utils -- a hung/prompting
+    # `security` call needs to be killable, same as every other external
+    # command in this tool.
+    calls = []
+
+    def fake_run_subprocess(args, **kwargs):
+        calls.append((args, kwargs))
+        raise SubprocessTimeoutError(args, kwargs.get("timeout", 10))
+
+    monkeypatch.setattr("core.mapping_store.run_subprocess", fake_run_subprocess)
+
+    with pytest.raises(SubprocessTimeoutError):
+        store._get_or_create_key()
+
+    assert len(calls) == 1
+    assert "timeout" in calls[0][1]

@@ -3,7 +3,10 @@ from pathlib import Path
 from core.convert import PageText
 from core.merge_replace import ReplacementResult
 from core.pipeline import DocumentRedactionResult, ExportDecision, StageResult
-from core.report import generate_report
+from core.report import (
+    CASE_LEVEL_HEADINGS, extract_document_sections, generate_report,
+    list_document_headings, merge_preserved_sections,
+)
 
 
 def _clean_result():
@@ -88,6 +91,90 @@ def test_no_duplicate_names_produces_no_ambiguity_section():
     result = _clean_result()
     report = generate_report([("case.pdf", result)], duplicate_lexicon_names=[])
     assert "同名待确认" not in report
+
+
+def test_extract_document_sections_pulls_out_matching_headings():
+    result_a = _blocked_result(["ocr 发现 1 处需人工核实的疑似内容"])
+    result_b = _clean_result()
+    report = generate_report([("a.pdf", result_a), ("b.pdf", result_b)])
+
+    sections = extract_document_sections(report, {"a.pdf", "b.pdf"})
+    assert set(sections.keys()) == {"a.pdf", "b.pdf"}
+    assert sections["a.pdf"].startswith("## a.pdf")
+    assert "需要人工核实" in sections["a.pdf"]
+    assert sections["b.pdf"].startswith("## b.pdf")
+    assert "未发现需要人工核实" in sections["b.pdf"]
+
+
+def test_extract_document_sections_ignores_non_matching_headings():
+    # the "同名待确认" case-level heading also starts with "## " but is
+    # not a per-document filename -- must not be mistaken for one.
+    result = _clean_result()
+    report = generate_report(
+        [("a.pdf", result)], duplicate_lexicon_names=["张三"],
+    )
+    sections = extract_document_sections(report, {"a.pdf"})
+    assert set(sections.keys()) == {"a.pdf"}
+
+
+def test_extract_document_sections_returns_empty_for_unknown_filenames():
+    result = _clean_result()
+    report = generate_report([("a.pdf", result)])
+    sections = extract_document_sections(report, {"nonexistent.pdf"})
+    assert sections == {}
+
+
+def test_merge_preserved_sections_appends_them_after_fresh_content():
+    fresh_result = _clean_result()
+    fresh_report = generate_report([("new.txt", fresh_result)])
+    preserved = {"old.pdf": "## old.pdf\n状态: ✅ 未发现需要人工核实的内容\n本文档共替换 0 处敏感信息。"}
+
+    merged = merge_preserved_sections(fresh_report, preserved)
+    assert "## new.txt" in merged
+    assert "## old.pdf" in merged
+    # fresh section still comes before the preserved one
+    assert merged.index("## new.txt") < merged.index("## old.pdf")
+
+
+def test_merge_preserved_sections_upgrades_header_when_preserved_needs_review():
+    fresh_result = _clean_result()
+    fresh_report = generate_report([("new.txt", fresh_result)])
+    assert "可以直接批准导出" in fresh_report  # sanity: starts clean
+
+    preserved = {
+        "old.pdf": (
+            "## old.pdf\n状态: ⚠️ 需要人工核实\n- llm 发现 1 处需人工核实的疑似内容\n"
+            "本文档共替换 1 处敏感信息。"
+        )
+    }
+    merged = merge_preserved_sections(fresh_report, preserved)
+    assert "需要人工核实" in merged.split("\n")[2]  # header line upgraded
+    assert "可以直接批准导出" not in merged
+
+
+def test_merge_preserved_sections_with_empty_dict_is_a_no_op():
+    fresh_result = _clean_result()
+    fresh_report = generate_report([("new.txt", fresh_result)])
+    assert merge_preserved_sections(fresh_report, {}) == fresh_report
+
+
+def test_list_document_headings_finds_all_headings_including_case_level():
+    result = _clean_result()
+    report = generate_report(
+        [("a.pdf", result), ("b.pdf", result)], duplicate_lexicon_names=["张三"],
+    )
+    headings = list_document_headings(report)
+    assert headings == {"a.pdf", "b.pdf", "⚠️ 同名待确认"}
+
+
+def test_case_level_headings_constant_matches_what_generate_report_emits():
+    # guards against report.py's actual case-level heading text drifting
+    # away from the constant orchestrator.py relies on to exclude it
+    # from "other documents in this case" when merging preserved sections
+    result = _clean_result()
+    report = generate_report([("a.pdf", result)], duplicate_lexicon_names=["张三"])
+    headings = list_document_headings(report)
+    assert headings - {"a.pdf"} == CASE_LEVEL_HEADINGS
 
 
 def test_leak_listed_prominently_with_distinct_severity():

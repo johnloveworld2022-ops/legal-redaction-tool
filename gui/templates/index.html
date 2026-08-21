@@ -9,6 +9,7 @@
 
 <div class="card">
   <form action="{{ url_for('process_files') }}" method="post" enctype="multipart/form-data" id="uploadForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="case_name">案件名称(同一个案件请每次填一样的名字)</label>
     <input type="text" name="case_name" id="case_name" list="case_list"
            placeholder="例如:张三合同纠纷" required

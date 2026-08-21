@@ -81,9 +81,21 @@ def find_duplicate_lexicon_entries(entries: list[str]) -> list[str]:
 
 
 def case_workspace_for(case_name: str) -> CaseWorkspace:
+    """Reject any case name that could escape WORKBENCH_ROOT via path
+    traversal ("/", "\\", or ".."). case_name reaches here from a GUI form
+    field (not a URL path segment), so Flask/Werkzeug's route-level
+    traversal protection never applies -- a stray "/" in a copy-pasted or
+    OCR'd case identifier is enough to write case data (raw documents,
+    OCR'd text, the encrypted mapping key) anywhere the process can write,
+    entirely outside the one folder this tool exists to contain everything
+    in. Found and confirmed exploitable via a codebase review; see
+    grill-report-2026-08-21.md.
+    """
     safe_name = case_name.strip()
     if not safe_name:
         raise ValueError("案件名称不能为空")
+    if "/" in safe_name or "\\" in safe_name or ".." in safe_name:
+        raise ValueError("案件名称不能包含 / \\ 或 .. 这类路径符号")
     ws = CaseWorkspace(root=WORKBENCH_ROOT / f"案件_{safe_name}")
     ws.ensure_created()
     return ws

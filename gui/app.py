@@ -19,7 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flask import Flask, flash, redirect, render_template, request, send_from_directory, url_for
+from flask import (
+    Flask, abort, flash, redirect, render_template, request, send_from_directory,
+    session, url_for,
+)
 
 from core.case_workspace import case_workspace_for, list_case_names
 from core.orchestrator import approve_case_export, process_case_files
@@ -27,9 +30,45 @@ from core.orchestrator import approve_case_export, process_case_files
 PORT = 5055
 
 app = Flask(__name__)
-# Random per-process key, only used to sign the flash-message cookie for
-# this local single-user session -- no cross-restart persistence needed.
+# Random per-process key, only used to sign the flash-message/session
+# cookie for this local single-user session -- no cross-restart
+# persistence needed.
 app.secret_key = secrets.token_hex(16)
+
+
+def _ensure_csrf_token() -> str:
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_hex(16)
+        session["csrf_token"] = token
+    return token
+
+
+@app.context_processor
+def _inject_csrf_token():
+    return {"csrf_token": _ensure_csrf_token()}
+
+
+@app.before_request
+def _enforce_csrf_on_post():
+    # Binding to 127.0.0.1 only stops remote network attackers -- it does
+    # NOT stop a malicious web page open in the same browser from
+    # auto-submitting a cross-origin form POST here (browsers allow
+    # simple cross-origin form submissions with no preflight). Without
+    # this check, that combined with any file-write bug becomes remotely
+    # triggerable just by having the GUI open. Found via external
+    # security review; see grill-report-2026-08-21.md.
+    if request.method != "POST":
+        return
+    submitted = request.form.get("csrf_token", "")
+    expected = session.get("csrf_token", "")
+    # compare_digest requires bytes/ASCII-only str; a malicious or
+    # malformed submission could easily contain non-ASCII characters, and
+    # that must be a clean 403, not a 500.
+    if not expected or not secrets.compare_digest(
+        submitted.encode("utf-8"), expected.encode("utf-8")
+    ):
+        abort(403)
 
 
 @app.route("/")
@@ -64,9 +103,22 @@ def process_files():
             dest = tmp_dir / Path(f.filename).name
             f.save(dest)
             saved_paths.append(dest)
-        process_case_files(case_name, saved_paths)
+        try:
+            summary = process_case_files(case_name, saved_paths)
+        except ValueError as e:
+            # case_workspace_for rejects case names containing path
+            # separators -- surface this as a plain-language form error,
+            # not a bare 500 page.
+            return render_template(
+                "index.html", existing_cases=list_case_names(),
+                error=str(e), last_case_name=case_name,
+            )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if summary.skipped:
+        skipped_desc = "、".join(f"{name}({reason})" for name, reason in summary.skipped)
+        flash(f"⚠️ 以下文件未能处理:{skipped_desc}", "skipped")
 
     return redirect(url_for("view_case", case_name=case_name))
 
@@ -111,16 +163,25 @@ def case_image(case_name, filename):
 
 @app.route("/case/<case_name>/reprocess", methods=["POST"])
 def reprocess(case_name):
-    stem = request.form["stem"]
+    # stem is a raw form field, not a URL path segment -- Path(...).name
+    # strips any path components so a traversal payload (e.g.
+    # "../../../etc/foo") can't escape tmp_dir, mirroring the pattern
+    # already used correctly for uploaded filenames in process_files().
+    stem = Path(request.form["stem"]).name
     corrected_text = request.form["text"]
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="脱敏修正_"))
+    summary = None
     try:
         tmp_txt = tmp_dir / f"{stem}.txt"
         tmp_txt.write_text(corrected_text, encoding="utf-8")
-        process_case_files(case_name, [tmp_txt])
+        summary = process_case_files(case_name, [tmp_txt])
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if summary and summary.skipped:
+        skipped_desc = "、".join(f"{name}({reason})" for name, reason in summary.skipped)
+        flash(f"⚠️ 重新处理未能成功:{skipped_desc}", "skipped")
 
     return redirect(url_for("view_case", case_name=case_name))
 

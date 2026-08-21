@@ -13,7 +13,10 @@ from core.leak_check import verify_no_leak
 from core.mapping_store import MappingStore
 from core.ollama_client import OllamaClient
 from core.pipeline import DocumentRedactionResult, StageResult, redact_document
-from core.report import generate_report
+from core.report import (
+    CASE_LEVEL_HEADINGS, extract_document_sections, generate_report,
+    list_document_headings, merge_preserved_sections,
+)
 
 
 @dataclass
@@ -130,7 +133,7 @@ def process_case_files(
         # from. Never trust export_decision.auto_export alone -- it only
         # reflects what the detection stages themselves reported, not
         # whether the final text is actually clean.
-        leak_result = verify_no_leak(result.replacement.text, result.replacement.mapping)
+        leak_result = verify_no_leak(result.replacement.text, result.replacement.mapping, lexicon)
         leaks_by_file[raw_path.name] = leak_result.leaks
 
         candidate_path = ws.candidate_dir / f"{raw_path.stem}_候选脱敏.txt"
@@ -150,6 +153,25 @@ def process_case_files(
         duplicate_lexicon_names=duplicate_names, leaks=leaks_by_file,
     )
     report_path = ws.candidate_dir / "审核报告.md"
+
+    # This call only ever knows about `file_paths` -- if the case already
+    # has OTHER documents (e.g. this is a single-file reprocess via the
+    # documented OCR-correction workflow), naively overwriting
+    # 审核报告.md from just this call's `results` would silently discard
+    # every other document's review status. Preserve their sections from
+    # the prior report instead of losing them. Real bug found via
+    # external architecture review; see grill-report-2026-08-21.md.
+    if report_path.exists():
+        old_report_text = report_path.read_text(encoding="utf-8")
+        other_filenames = (
+            list_document_headings(old_report_text)
+            - CASE_LEVEL_HEADINGS
+            - set(processed_filenames)
+        )
+        if other_filenames:
+            preserved = extract_document_sections(old_report_text, other_filenames)
+            report_text = merge_preserved_sections(report_text, preserved)
+
     report_path.write_text(report_text, encoding="utf-8")
 
     all_clean = all(r.export_decision.auto_export for _, r in results) and all(
@@ -182,6 +204,7 @@ def approve_case_export(case_name: str) -> ApproveSummary:
     time, against the case's current mapping.
     """
     ws = case_workspace_for(case_name)
+    lexicon = ws.load_lexicon()
     mapping_store = MappingStore(path=ws.mapping_path, keychain_service=ws.keychain_service)
     mapping = mapping_store.load()
 
@@ -190,7 +213,7 @@ def approve_case_export(case_name: str) -> ApproveSummary:
     blocked_by_leak: list[tuple[str, list[str]]] = []
     for p in candidates:
         text = p.read_text(encoding="utf-8")
-        leak_result = verify_no_leak(text, mapping)
+        leak_result = verify_no_leak(text, mapping, lexicon)
         if not leak_result.ok:
             blocked_by_leak.append((p.name, leak_result.leaks))
             continue

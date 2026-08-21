@@ -1,6 +1,14 @@
 from core.convert import PageText
 from core.pipeline import DocumentRedactionResult
 
+# Headings generate_report emits that are NOT a per-document filename.
+# Callers merging preserved sections from an old report (see
+# merge_preserved_sections) must exclude these when deciding which "## "
+# headings represent other documents in the case, or the case-level
+# section would be duplicated (once freshly regenerated, once preserved).
+_DUPLICATE_NAMES_HEADING = "⚠️ 同名待确认"
+CASE_LEVEL_HEADINGS = {_DUPLICATE_NAMES_HEADING}
+
 
 def generate_report(
     results: list[tuple[str, DocumentRedactionResult]],
@@ -25,7 +33,7 @@ def generate_report(
     lines = ["# 脱敏处理报告", "", header, ""]
 
     if duplicate_lexicon_names:
-        lines.append("## ⚠️ 同名待确认")
+        lines.append(f"## {_DUPLICATE_NAMES_HEADING}")
         lines.append(
             "「案件人员清单」里以下姓名出现了不止一次,可能是本案里有两个不同的人"
             "恰好同名——系统目前没办法自动区分,会把它们当成同一个人替换成同一个"
@@ -91,3 +99,88 @@ def generate_report(
             )
         lines.append("")
     return "\n".join(lines)
+
+
+def list_document_headings(report_text: str) -> set[str]:
+    """All '## X' heading titles in a report string, including
+    CASE_LEVEL_HEADINGS entries -- callers deciding which headings
+    represent actual per-document filenames (as opposed to a case-level
+    section) must subtract CASE_LEVEL_HEADINGS themselves.
+    """
+    return {line[3:] for line in report_text.split("\n") if line.startswith("## ")}
+
+
+def extract_document_sections(report_text: str, filenames: set[str]) -> dict[str, str]:
+    """Parse a report string previously produced by generate_report and
+    return {filename: full markdown section (heading through the next
+    '## ' heading or end of text)} for every name in `filenames` that has
+    a matching '## {filename}' heading. Headings that aren't in
+    `filenames` (e.g. the case-level "## ⚠️ 同名待确认" heading, which
+    also starts with "## " but is not a per-document filename) are
+    skipped, not mistaken for a document section.
+
+    Used by merge_preserved_sections to carry another document's
+    already-computed review section forward when regenerating a report
+    for a different subset of a case's documents.
+    """
+    sections: dict[str, str] = {}
+    current_name: str | None = None
+    current_lines: list[str] = []
+
+    def _flush() -> None:
+        if current_name is not None:
+            sections[current_name] = "\n".join(current_lines).rstrip("\n")
+
+    for line in report_text.split("\n"):
+        if line.startswith("## "):
+            _flush()
+            heading = line[3:]
+            if heading in filenames:
+                current_name = heading
+                current_lines = [line]
+            else:
+                current_name = None
+                current_lines = []
+        elif current_name is not None:
+            current_lines.append(line)
+    _flush()
+    return sections
+
+
+def merge_preserved_sections(report_text: str, preserved_sections: dict[str, str]) -> str:
+    """Append preserved per-document sections (extracted from a PRIOR
+    report via extract_document_sections, for documents not part of the
+    current regeneration) after report_text's own freshly-generated
+    sections, and upgrade the summary header to the "needs review"
+    wording if any preserved section still indicates it needs review.
+
+    Exists because process_case_files only ever knows about the
+    documents passed into the CURRENT call -- without this, reprocessing
+    a single corrected file (the documented OCR-correction workflow)
+    would silently discard every other document's review status when
+    审核报告.md gets regenerated and overwritten from just that one file.
+    Real bug found via external architecture review; see
+    grill-report-2026-08-21.md.
+    """
+    if not preserved_sections:
+        return report_text
+
+    any_preserved_needs_review = any(
+        "⚠️ 需要人工核实" in section or "🚨" in section
+        for section in preserved_sections.values()
+    )
+
+    lines = report_text.split("\n")
+    if any_preserved_needs_review:
+        for i, line in enumerate(lines):
+            if line.startswith("✅ 所有文档均未发现"):
+                lines[i] = (
+                    "⚠️ 有文档需要人工核实,请看下面每份文档的详情,确认无误后再运行"
+                    "「批准并导出」。"
+                )
+                break
+
+    merged_text = "\n".join(lines).rstrip("\n")
+    for name in sorted(preserved_sections):
+        merged_text += "\n\n" + preserved_sections[name]
+    return merged_text + "\n"

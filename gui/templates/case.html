@@ -41,6 +41,7 @@
   {% endif %}
 
   <form action="{{ url_for('reprocess', case_name=case_name) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="stem" value="{{ doc.stem }}">
     <label>提取出的原始文字(如发现认错字,直接在这里改,改完点下面的按钮用改正后的文字重新处理)</label>
     <textarea name="text">{{ doc.raw_text }}</textarea>
@@ -65,6 +66,7 @@
 
 {% if has_pending %}
 <form action="{{ url_for('approve', case_name=case_name) }}" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <button type="submit">确认无误,批准导出全部</button>
 </form>
 {% endif %}
