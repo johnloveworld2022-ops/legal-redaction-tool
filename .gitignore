@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+
+# bureau board (rendered output, not source)
+/gazette/
